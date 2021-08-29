@@ -1,0 +1,11 @@
+{
+  "name": "knoba",
+  "type": "module",
+  "version": "0.0.1",
+  "description": "knoba",
+  "main": "index.js",
+  "dependencies": {
+    "@notionhq/client": "^0.3.1",
+    "async": "^3.2.1"
+  }
+}
