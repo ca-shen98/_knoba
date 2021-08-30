@@ -1,6 +1,7 @@
 import { Client } from '@notionhq/client';
 
 const notion = new Client({ auth: 'secret_osqIH2GJiPiOyHyfynaFP7VU4B2rbYGIPHDxEQkvnBe' });
+// TODO ratelimit asyncqueue retrybackoff
 
 // const rootPageId1 = '742c0a8a-9993-48e5-991a-3a385a583919';
 // const rootPageId2 = '1b2a81eb-bd66-4dcd-879f-fb70f847ea0f';
@@ -14,7 +15,6 @@ const notion = new Client({ auth: 'secret_osqIH2GJiPiOyHyfynaFP7VU4B2rbYGIPHDxEQ
 //   while (getChildrenRequests.length !== 0) {
 //     const requestId = getChildrenRequests.pop();
 //     try {
-//       // TODO ratelimit asyncqueue retrybackoff
 //       const response = await notion.blocks.children.list({ block_id: requestId });
 //       for (const block of response.results) {
 //         const node = { content: block[block.type], children: [] };
@@ -35,37 +35,67 @@ const notion = new Client({ auth: 'secret_osqIH2GJiPiOyHyfynaFP7VU4B2rbYGIPHDxEQ
 //   return tree;
 // };
 
-const references = [
-  {
-    source: { type: 'notion', notion: { blockId: '6f7fe817-4ef0-430d-888c-077e3576f4a7' } },
-    sinks: [{ type: 'notion', notion: { blockId: '35a845e3-dc43-4f3b-84d4-b8568bca132d' } }],
-    lastSynced: 0
-  }
+const referencesList = [
+  [
+    {
+      type: 'notion',
+      notion: { blockId: '6f7fe817-4ef0-430d-888c-077e3576f4a7' },
+      lastSync: 0,
+      lastEdit: { floor: 0, ceil: 0 }
+    },
+    {
+      type: 'notion',
+      notion: { blockId: '35a845e3-dc43-4f3b-84d4-b8568bca132d' },
+      lastSync: 0,
+      lastEdit: { floor: 0, ceil: 0 }
+    }
+  ]
 ];
 
-async function updateReferences() {
-  for (const { source, sinks, lastSynced } of references) {
-    if (source.type !== 'notion') { continue; }
-    let retrieveResponse;
+async function retrieveReference(reference) {
+  let retrieve = null;
+  if (reference.type === 'notion') {
     try {
-      sourceRetrieveResponse = await notion.blocks.retrieve({ block_id: source[source.type].blockId });
+      retrieve = await notion.blocks.retrieve({ block_id: reference.notion.blockId });
+      // notion api returns last_edited_time with minute granularity
+      reference.lastEdit.floor = Date.parse(retrieve.last_edited_time);
+      reference.lastEdit.ceil = new Date(reference.lastEdit.floor + 60000).getTime();
     } catch (error) { console.error(error); }
-    for (const sink of sinks) {
-      if (sink.type !== 'notion') { continue; }
-      try {
-        const sinkRetrieveResponse = await notion.blocks.retrieve({ block_id: sink[sink.type].blockId });
-        if (
-          sourceRetrieveResponse.last_edited_time > lastSynced ||
-          sinkRetrieveResponse.last_edited_time > lastSynced
-        ) {
-          const updateResponse = await notion.blocks.update({
-            block_id: sink[sink.type].blockId,
-            [sinkRetrieveResponse.type]: { text: sourceRetrieveResponse[sourceRetrieveResponse.type].text }
-          });
-        }
-      } catch (error) { console.error(error); }
-    }
   }
+  return { reference, retrieve };
 };
 
-setInterval(updateReferences, 5000);
+async function updateReference(sink, source) {
+  // invariant: source.lastEdit >= sink.lastEdit
+  if (
+    sink.reference.lastEdit.floor <= sink.reference.lastSync &&
+    source.reference.lastEdit.ceil <= sink.reference.lastSync
+  ) { return; }
+  if (sink.reference.type !== 'notion' || source.reference.type !== 'notion') { return; }
+  if (sink.reference.notion.blockId === source.reference.notion.blockId) { return; }
+  // TODO check content equality?
+  try {
+    const update = await notion.blocks.update({
+      block_id: sink.reference.notion.blockId,
+      [sink.retrieve.type]: { text: source.retrieve[source.retrieve.type].text }
+    });
+    sink.reference.lastSync = Date.parse(update.last_edited_time);
+  } catch (error) { console.error(error); }
+};
+
+function updateReferences(references) {
+  Promise.all(references.map(retrieveReference)).then((referenceList) => {
+      const source = referenceList.filter((reference) => reference.retrieve)
+        .filter((reference) => reference.reference.lastSync < reference.reference.lastEdit.ceil)
+        .reduce(
+          (current, next) => (!current || next.reference.lastEdit.floor > current.reference.lastEdit.floor)
+            ? next : current,
+          null
+        );
+      return { source, referenceList };
+    }).then(({ source, referenceList }) => !source ? Promise.resolve() :
+        Promise.all(referenceList.map((sink) => updateReference(sink, source)))
+          .then(() => { source.reference.lastSync = source.reference.lastEdit.floor; }));
+};
+
+setInterval(() => Promise.all(referencesList.map(updateReferences)), 5000);
