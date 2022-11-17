@@ -3,5 +3,4 @@ export default class {
     this.head = null;
     this.tail = null;
   }
-  construc
 }
