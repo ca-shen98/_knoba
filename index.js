@@ -1,6 +1,6 @@
 import { Client } from '@notionhq/client';
 
-const notion = new Client({ auth: 'secret_osqIH2GJiPiOyHyfynaFP7VU4B2rbYGIPHDxEQkvnBe' });
+const notion = new Client({ auth: '<secret_rotated>' });
 // TODO ratelimit asyncqueue retrybackoff
 
 // const rootPageId1 = '742c0a8a-9993-48e5-991a-3a385a583919';
